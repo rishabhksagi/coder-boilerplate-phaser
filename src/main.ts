@@ -1,8 +1,11 @@
 import Phaser from 'phaser';
+import UIPlugin from 'phaser3-rex-plugins/templates/ui/ui-plugin.js';
 import { Boot } from './scenes/Boot';
 import { Preloader } from './scenes/Preloader';
 import { MainMenu } from './scenes/MainMenu';
 import { Game } from './scenes/Game';
+import { GameOver } from './scenes/GameOver';
+import { COLORS } from './ui/theme';
 import { initIframeReady, notifyAppReady } from './lib/iframe-ready-notification';
 
 const config: Phaser.Types.Core.GameConfig = {
@@ -10,7 +13,11 @@ const config: Phaser.Types.Core.GameConfig = {
   width: 800,
   height: 600,
   parent: 'game-container',
-  backgroundColor: '#1a1a2e',
+  backgroundColor: COLORS.BG_DARK,
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
   physics: {
     default: 'arcade',
     arcade: {
@@ -18,7 +25,16 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [Boot, Preloader, MainMenu, Game],
+  plugins: {
+    scene: [
+      {
+        key: 'rexUI',
+        plugin: UIPlugin,
+        mapping: 'rexUI',
+      },
+    ],
+  },
+  scene: [Boot, Preloader, MainMenu, Game, GameOver],
 };
 
 const game = new Phaser.Game(config);
