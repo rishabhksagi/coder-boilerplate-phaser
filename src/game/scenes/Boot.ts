@@ -1,5 +1,4 @@
 import Phaser from 'phaser';
-import { COLORS } from '../ui/theme';
 
 /**
  * Boot scene — generates all game textures programmatically.
@@ -15,7 +14,6 @@ export class Boot extends Phaser.Scene {
     this.generateStarTexture();
     this.generateAsteroidTexture();
     this.generateParticleTexture();
-    this.generateHeartTexture();
     this.generateBgStarTexture();
     this.scene.start('Preloader');
   }
@@ -28,7 +26,7 @@ export class Boot extends Phaser.Scene {
     g.fillStyle(0xffd93d, 0.3);
     g.fillCircle(20, 33, 5);
     // Ship body
-    g.fillStyle(COLORS.PRIMARY, 1);
+    g.fillStyle(0x00e5ff, 1);
     g.beginPath();
     g.moveTo(20, 2);
     g.lineTo(4, 34);
@@ -39,7 +37,7 @@ export class Boot extends Phaser.Scene {
     g.closePath();
     g.fillPath();
     // Wing accents
-    g.fillStyle(COLORS.PRIMARY_DARK, 1);
+    g.fillStyle(0x00b8d4, 1);
     g.fillTriangle(20, 10, 8, 30, 14, 28);
     g.fillTriangle(20, 10, 32, 30, 26, 28);
     // Cockpit
@@ -55,10 +53,10 @@ export class Boot extends Phaser.Scene {
     const g = this.make.graphics({});
     const cx = 14, cy = 14;
     // Outer glow
-    g.fillStyle(COLORS.ACCENT, 0.2);
+    g.fillStyle(0xffd93d, 0.2);
     this.drawStarShape(g, cx, cy, 5, 14, 6);
     // Main star
-    g.fillStyle(COLORS.ACCENT, 1);
+    g.fillStyle(0xffd93d, 1);
     this.drawStarShape(g, cx, cy, 5, 10, 4);
     // Inner highlight
     g.fillStyle(0xfff5cc, 0.8);
@@ -89,7 +87,6 @@ export class Boot extends Phaser.Scene {
 
   private generateParticleTexture() {
     const g = this.make.graphics({});
-    // Soft glow circle
     g.fillStyle(0xffffff, 1);
     g.fillCircle(6, 6, 6);
     g.fillStyle(0xffffff, 0.5);
@@ -97,38 +94,6 @@ export class Boot extends Phaser.Scene {
     g.fillStyle(0xffffff, 0.8);
     g.fillCircle(6, 6, 2);
     g.generateTexture('particle', 12, 12);
-    g.destroy();
-  }
-
-  private generateHeartTexture() {
-    const g = this.make.graphics({});
-    // Heart using parametric equation
-    g.fillStyle(COLORS.DANGER, 1);
-    const cx = 12, cy = 13, s = 12 / 30;
-    g.beginPath();
-    let first = true;
-    for (let t = 0; t <= Math.PI * 2; t += 0.05) {
-      const x = cx + s * 16 * Math.pow(Math.sin(t), 3);
-      const y =
-        cy -
-        s *
-          (13 * Math.cos(t) -
-            5 * Math.cos(2 * t) -
-            2 * Math.cos(3 * t) -
-            Math.cos(4 * t));
-      if (first) {
-        g.moveTo(x, y);
-        first = false;
-      } else {
-        g.lineTo(x, y);
-      }
-    }
-    g.closePath();
-    g.fillPath();
-    // Highlight
-    g.fillStyle(0xff8888, 0.5);
-    g.fillCircle(cx - 3, cy - 3, 2);
-    g.generateTexture('heart', 24, 24);
     g.destroy();
   }
 
@@ -140,14 +105,10 @@ export class Boot extends Phaser.Scene {
     g.destroy();
   }
 
-  // ─── Drawing helpers ────────────────────────────────────────────
   private drawStarShape(
     g: Phaser.GameObjects.Graphics,
-    cx: number,
-    cy: number,
-    points: number,
-    outerR: number,
-    innerR: number,
+    cx: number, cy: number,
+    points: number, outerR: number, innerR: number,
   ) {
     const step = Math.PI / points;
     g.beginPath();
@@ -165,10 +126,8 @@ export class Boot extends Phaser.Scene {
 
   private drawJaggedCircle(
     g: Phaser.GameObjects.Graphics,
-    cx: number,
-    cy: number,
-    radius: number,
-    segments: number,
+    cx: number, cy: number,
+    radius: number, segments: number,
   ) {
     g.beginPath();
     for (let i = 0; i < segments; i++) {

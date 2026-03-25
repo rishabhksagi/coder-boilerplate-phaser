@@ -1,4 +1,6 @@
 import { defineConfig, Plugin } from 'vite'
+import react from '@vitejs/plugin-react'
+import checker from 'vite-plugin-checker'
 import path from 'path'
 
 // Captures unhandled runtime errors AND compile errors and forwards them
@@ -139,7 +141,7 @@ function healthCheckPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [healthCheckPlugin(), errorBridgePlugin()],
+  plugins: [react(), checker({ typescript: { tsconfigPath: './tsconfig.app.json' } }), healthCheckPlugin(), errorBridgePlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
