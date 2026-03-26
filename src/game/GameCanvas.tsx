@@ -17,6 +17,7 @@ interface Star {
   vy: number;
   rotation: number;
   rotationSpeed: number;
+  active: boolean;
 }
 
 interface Asteroid {
@@ -27,6 +28,7 @@ interface Asteroid {
   rotation: number;
   rotationSpeed: number;
   vertices: { angle: number; r: number }[];
+  active: boolean;
 }
 
 interface Particle {
@@ -38,6 +40,7 @@ interface Particle {
   maxLife: number;
   color: string;
   size: number;
+  active: boolean;
 }
 
 interface ScorePopup {
@@ -47,6 +50,7 @@ interface ScorePopup {
   color: string;
   life: number;
   maxLife: number;
+  active: boolean;
 }
 
 interface BgStar {
@@ -55,6 +59,103 @@ interface BgStar {
   size: number;
   speed: number;
   alpha: number;
+}
+
+// --- Pre-render sprites to offscreen canvases (drawn once, reused every frame) ---
+
+function createSpriteCanvas(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d')!;
+  draw(ctx);
+  return c;
+}
+
+function createPlayerSprite(): HTMLCanvasElement {
+  return createSpriteCanvas(40, 40, (ctx) => {
+    ctx.translate(20, 20);
+    // Engine glow
+    const glowGrad = ctx.createRadialGradient(0, 15, 0, 0, 15, 10);
+    glowGrad.addColorStop(0, 'rgba(255, 107, 0, 0.6)');
+    glowGrad.addColorStop(1, 'rgba(255, 107, 0, 0)');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(0, 15, 10, 0, Math.PI * 2);
+    ctx.fill();
+    // Ship body
+    ctx.fillStyle = '#00e5ff';
+    ctx.beginPath();
+    ctx.moveTo(0, -18);
+    ctx.lineTo(-16, 14);
+    ctx.lineTo(-8, 10);
+    ctx.lineTo(0, 16);
+    ctx.lineTo(8, 10);
+    ctx.lineTo(16, 14);
+    ctx.closePath();
+    ctx.fill();
+    // Wing accents
+    ctx.fillStyle = '#00b8d4';
+    ctx.beginPath();
+    ctx.moveTo(0, -10);
+    ctx.lineTo(-12, 10);
+    ctx.lineTo(-6, 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(0, -10);
+    ctx.lineTo(12, 10);
+    ctx.lineTo(6, 8);
+    ctx.closePath();
+    ctx.fill();
+    // Cockpit
+    ctx.fillStyle = '#1a1a2e';
+    ctx.beginPath();
+    ctx.arc(0, -4, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(102, 255, 255, 0.6)';
+    ctx.beginPath();
+    ctx.arc(0, -5, 2, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function createStarSprite(): HTMLCanvasElement {
+  return createSpriteCanvas(30, 30, (ctx) => {
+    ctx.translate(15, 15);
+    const drawShape = (outerR: number, innerR: number) => {
+      const points = 5;
+      const step = Math.PI / points;
+      ctx.beginPath();
+      for (let i = 0; i < 2 * points; i++) {
+        const r = i % 2 === 0 ? outerR : innerR;
+        const angle = i * step - Math.PI / 2;
+        if (i === 0) ctx.moveTo(r * Math.cos(angle), r * Math.sin(angle));
+        else ctx.lineTo(r * Math.cos(angle), r * Math.sin(angle));
+      }
+      ctx.closePath();
+      ctx.fill();
+    };
+    ctx.fillStyle = 'rgba(255, 217, 61, 0.2)';
+    drawShape(14, 6);
+    ctx.fillStyle = '#ffd93d';
+    drawShape(10, 4);
+    ctx.fillStyle = 'rgba(255, 245, 204, 0.8)';
+    drawShape(5, 2);
+  });
+}
+
+function createBgCanvas(bgStars: BgStar[]): HTMLCanvasElement {
+  return createSpriteCanvas(GAME_WIDTH, GAME_HEIGHT, (ctx) => {
+    // Static gradient background
+    const bgGrad = ctx.createLinearGradient(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    bgGrad.addColorStop(0, '#0a0a1a');
+    bgGrad.addColorStop(0.4, '#1a1a3e');
+    bgGrad.addColorStop(0.7, '#0d1b2a');
+    bgGrad.addColorStop(1, '#0a0a1a');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  });
 }
 
 export default function GameCanvas({
@@ -88,7 +189,13 @@ export default function GameCanvas({
   const timersRef = useRef({ starElapsed: 0, asteroidElapsed: 0, difficultyElapsed: 0 });
   const lastTimeRef = useRef(0);
 
-  // Create background stars
+  // Cached sprite canvases
+  const spritesRef = useRef<{
+    player: HTMLCanvasElement;
+    star: HTMLCanvasElement;
+    bg: HTMLCanvasElement;
+  } | null>(null);
+
   const initBgStars = useCallback(() => {
     const stars: BgStar[] = [];
     for (let i = 0; i < 80; i++) {
@@ -117,8 +224,9 @@ export default function GameCanvas({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d')!;
+    const ctx = canvas.getContext('2d', { alpha: false })!;
 
+    // Reset state
     const state = gameStateRef.current;
     state.playerX = GAME_WIDTH / 2;
     state.playerY = GAME_HEIGHT - 60;
@@ -137,6 +245,13 @@ export default function GameCanvas({
 
     initBgStars();
 
+    // Pre-render sprites once
+    spritesRef.current = {
+      player: createPlayerSprite(),
+      star: createStarSprite(),
+      bg: createBgCanvas(bgStarsRef.current),
+    };
+
     EventBus.emit('score-change', 0);
     EventBus.emit('lives-change', 3);
     EventBus.emit('level-change', 1);
@@ -151,15 +266,22 @@ export default function GameCanvas({
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
 
+    // --- Object pools (swap-remove instead of splice for O(1) removal) ---
+    function removeAt<T extends { active: boolean }>(arr: T[], i: number) {
+      arr[i].active = false;
+      arr[i] = arr[arr.length - 1];
+      arr.pop();
+    }
+
     function spawnStar() {
       const x = 30 + Math.random() * (GAME_WIDTH - 60);
       const speed = 80 + state.level * 20;
       starsRef.current.push({
-        x,
-        y: -20,
+        x, y: -20,
         vy: speed + Math.random() * 60,
         rotation: 0,
         rotationSpeed: (Math.random() - 0.5) * 2,
+        active: true,
       });
     }
 
@@ -174,13 +296,13 @@ export default function GameCanvas({
         vertices.push({ angle, r });
       }
       asteroidsRef.current.push({
-        x,
-        y: -20,
+        x, y: -20,
         vy: speed + Math.random() * 80,
         radius: 14 + Math.random() * 4,
         rotation: 0,
         rotationSpeed: (Math.random() - 0.5) * 3,
         vertices,
+        active: true,
       });
     }
 
@@ -192,123 +314,38 @@ export default function GameCanvas({
           x, y,
           vx: Math.cos(angle) * speed,
           vy: Math.sin(angle) * speed,
-          life: 0.4,
-          maxLife: 0.4,
-          color,
-          size: 2 + Math.random() * 4,
+          life: 0.4, maxLife: 0.4,
+          color, size: 2 + Math.random() * 4,
+          active: true,
         });
       }
     }
 
     function addPopup(x: number, y: number, text: string, color: string) {
-      popupsRef.current.push({ x, y, text, color, life: 0.7, maxLife: 0.7 });
+      popupsRef.current.push({ x, y, text, color, life: 0.7, maxLife: 0.7, active: true });
     }
 
-    function drawPlayer(ctx: CanvasRenderingContext2D, x: number, y: number) {
-      ctx.save();
-      ctx.translate(x, y);
-
-      // Engine glow
-      const glowGrad = ctx.createRadialGradient(0, 15, 0, 0, 15, 10);
-      glowGrad.addColorStop(0, 'rgba(255, 107, 0, 0.6)');
-      glowGrad.addColorStop(1, 'rgba(255, 107, 0, 0)');
-      ctx.fillStyle = glowGrad;
-      ctx.beginPath();
-      ctx.arc(0, 15, 10, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Ship body
-      ctx.fillStyle = '#00e5ff';
-      ctx.beginPath();
-      ctx.moveTo(0, -18);
-      ctx.lineTo(-16, 14);
-      ctx.lineTo(-8, 10);
-      ctx.lineTo(0, 16);
-      ctx.lineTo(8, 10);
-      ctx.lineTo(16, 14);
-      ctx.closePath();
-      ctx.fill();
-
-      // Wing accents
-      ctx.fillStyle = '#00b8d4';
-      ctx.beginPath();
-      ctx.moveTo(0, -10);
-      ctx.lineTo(-12, 10);
-      ctx.lineTo(-6, 8);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(0, -10);
-      ctx.lineTo(12, 10);
-      ctx.lineTo(6, 8);
-      ctx.closePath();
-      ctx.fill();
-
-      // Cockpit
-      ctx.fillStyle = '#1a1a2e';
-      ctx.beginPath();
-      ctx.arc(0, -4, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(102, 255, 255, 0.6)';
-      ctx.beginPath();
-      ctx.arc(0, -5, 2, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.restore();
-    }
-
-    function drawStar(ctx: CanvasRenderingContext2D, x: number, y: number, rotation: number) {
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(rotation);
-
-      const points = 5;
-      const outerR = 10;
-      const innerR = 4;
-
-      // Outer glow
-      ctx.fillStyle = 'rgba(255, 217, 61, 0.2)';
-      drawStarShape(ctx, 14, 6);
-      // Main star
-      ctx.fillStyle = '#ffd93d';
-      drawStarShape(ctx, outerR, innerR);
-      // Inner highlight
-      ctx.fillStyle = 'rgba(255, 245, 204, 0.8)';
-      drawStarShape(ctx, 5, 2);
-
-      ctx.restore();
-    }
-
-    function drawStarShape(ctx: CanvasRenderingContext2D, outerR: number, innerR: number) {
-      const points = 5;
-      const step = Math.PI / points;
-      ctx.beginPath();
-      for (let i = 0; i < 2 * points; i++) {
-        const r = i % 2 === 0 ? outerR : innerR;
-        const angle = i * step - Math.PI / 2;
-        const x = r * Math.cos(angle);
-        const y = r * Math.sin(angle);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.closePath();
-      ctx.fill();
+    function checkCollision(ax: number, ay: number, ar: number, bx: number, by: number, br: number) {
+      const dx = ax - bx;
+      const dy = ay - by;
+      return dx * dx + dy * dy < (ar + br) * (ar + br);
     }
 
     function drawAsteroid(ctx: CanvasRenderingContext2D, a: Asteroid) {
       ctx.save();
       ctx.translate(a.x, a.y);
       ctx.rotate(a.rotation);
-
+      const verts = a.vertices;
+      const r = a.radius;
       // Shadow
       ctx.fillStyle = '#2a2a3a';
-      drawJagged(ctx, a.vertices, a.radius, 1, 1);
+      drawJagged(ctx, verts, r, 1, 1);
       // Body
       ctx.fillStyle = '#6b7280';
-      drawJagged(ctx, a.vertices, a.radius, 0, 0);
+      drawJagged(ctx, verts, r, 0, 0);
       // Highlight
       ctx.fillStyle = 'rgba(156, 163, 175, 0.6)';
-      drawJagged(ctx, a.vertices, a.radius * 0.6, -2, -2);
+      drawJagged(ctx, verts, r * 0.6, -2, -2);
       // Craters
       ctx.fillStyle = '#4b5563';
       ctx.beginPath();
@@ -317,7 +354,6 @@ export default function GameCanvas({
       ctx.beginPath();
       ctx.arc(-4, -3, 2, 0, Math.PI * 2);
       ctx.fill();
-
       ctx.restore();
     }
 
@@ -334,12 +370,6 @@ export default function GameCanvas({
       ctx.fill();
     }
 
-    function checkCollision(ax: number, ay: number, ar: number, bx: number, by: number, br: number) {
-      const dx = ax - bx;
-      const dy = ay - by;
-      return dx * dx + dy * dy < (ar + br) * (ar + br);
-    }
-
     function triggerGameOver() {
       state.isGameOver = true;
       const prev = parseInt(localStorage.getItem('highScore') || '0');
@@ -352,6 +382,7 @@ export default function GameCanvas({
       }, 600);
     }
 
+    // --- GAME LOOP ---
     function gameLoop(timestamp: number) {
       if (!lastTimeRef.current) lastTimeRef.current = timestamp;
       const dt = Math.min((timestamp - lastTimeRef.current) / 1000, 0.05);
@@ -369,15 +400,12 @@ export default function GameCanvas({
 
       const keys = keysRef.current;
       const timers = timersRef.current;
+      const sprites = spritesRef.current!;
 
       // Player movement
       const speed = 320;
-      if (keys.has('arrowleft') || keys.has('a')) {
-        state.playerX -= speed * dt;
-      }
-      if (keys.has('arrowright') || keys.has('d')) {
-        state.playerX += speed * dt;
-      }
+      if (keys.has('arrowleft') || keys.has('a')) state.playerX -= speed * dt;
+      if (keys.has('arrowright') || keys.has('d')) state.playerX += speed * dt;
       state.playerX = Math.max(20, Math.min(GAME_WIDTH - 20, state.playerX));
 
       // Spawn timers
@@ -402,15 +430,15 @@ export default function GameCanvas({
         EventBus.emit('level-change', state.level);
       }
 
-      // Update stars
-      for (let i = starsRef.current.length - 1; i >= 0; i--) {
-        const s = starsRef.current[i];
+      // Update stars (swap-remove for O(1))
+      const stars = starsRef.current;
+      for (let i = stars.length - 1; i >= 0; i--) {
+        const s = stars[i];
         s.y += s.vy * dt;
         s.rotation += s.rotationSpeed * dt;
 
-        // Collision with player
         if (checkCollision(s.x, s.y, 10, state.playerX, state.playerY, 14)) {
-          starsRef.current.splice(i, 1);
+          removeAt(stars, i);
           state.consecutiveCatches++;
           state.multiplier = 1 + Math.floor(state.consecutiveCatches / 5);
           const points = 10 * state.multiplier;
@@ -421,20 +449,18 @@ export default function GameCanvas({
           continue;
         }
 
-        if (s.y > GAME_HEIGHT + 30) {
-          starsRef.current.splice(i, 1);
-        }
+        if (s.y > GAME_HEIGHT + 30) removeAt(stars, i);
       }
 
       // Update asteroids
-      for (let i = asteroidsRef.current.length - 1; i >= 0; i--) {
-        const a = asteroidsRef.current[i];
+      const asteroids = asteroidsRef.current;
+      for (let i = asteroids.length - 1; i >= 0; i--) {
+        const a = asteroids[i];
         a.y += a.vy * dt;
         a.rotation += a.rotationSpeed * dt;
 
-        // Collision with player
         if (checkCollision(a.x, a.y, a.radius, state.playerX, state.playerY, 14)) {
-          asteroidsRef.current.splice(i, 1);
+          removeAt(asteroids, i);
           state.lives--;
           state.consecutiveCatches = 0;
           state.multiplier = 1;
@@ -444,41 +470,36 @@ export default function GameCanvas({
           state.shakeTime = 0.2;
           state.shakeIntensity = 4;
           state.playerFlashTime = 0.4;
-
-          if (state.lives <= 0) {
-            triggerGameOver();
-          }
+          if (state.lives <= 0) triggerGameOver();
           continue;
         }
 
-        if (a.y > GAME_HEIGHT + 40) {
-          asteroidsRef.current.splice(i, 1);
-        }
+        if (a.y > GAME_HEIGHT + 40) removeAt(asteroids, i);
       }
 
       // Update particles
-      for (let i = particlesRef.current.length - 1; i >= 0; i--) {
-        const p = particlesRef.current[i];
+      const particles = particlesRef.current;
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.life -= dt;
-        if (p.life <= 0) {
-          particlesRef.current.splice(i, 1);
-        }
+        if (p.life <= 0) removeAt(particles, i);
       }
 
       // Update popups
-      for (let i = popupsRef.current.length - 1; i >= 0; i--) {
-        const p = popupsRef.current[i];
+      const popups = popupsRef.current;
+      for (let i = popups.length - 1; i >= 0; i--) {
+        const p = popups[i];
         p.life -= dt;
         p.y -= 50 * dt;
-        if (p.life <= 0) {
-          popupsRef.current.splice(i, 1);
-        }
+        if (p.life <= 0) removeAt(popups, i);
       }
 
       // Update bg stars
-      for (const s of bgStarsRef.current) {
+      const bgStars = bgStarsRef.current;
+      for (let i = 0; i < bgStars.length; i++) {
+        const s = bgStars[i];
         s.y += s.speed * dt;
         if (s.y > GAME_HEIGHT) {
           s.y = 0;
@@ -490,57 +511,63 @@ export default function GameCanvas({
       if (state.shakeTime > 0) state.shakeTime -= dt;
       if (state.playerFlashTime > 0) state.playerFlashTime -= dt;
 
-      // --- RENDER ---
+      // ===== RENDER =====
       ctx.save();
 
       // Screen shake
       if (state.shakeTime > 0) {
-        const sx = (Math.random() - 0.5) * state.shakeIntensity * 2;
-        const sy = (Math.random() - 0.5) * state.shakeIntensity * 2;
-        ctx.translate(sx, sy);
+        ctx.translate(
+          (Math.random() - 0.5) * state.shakeIntensity * 2,
+          (Math.random() - 0.5) * state.shakeIntensity * 2,
+        );
       }
 
-      // Background
-      const bgGrad = ctx.createLinearGradient(0, 0, GAME_WIDTH, GAME_HEIGHT);
-      bgGrad.addColorStop(0, '#0a0a1a');
-      bgGrad.addColorStop(0.4, '#1a1a3e');
-      bgGrad.addColorStop(0.7, '#0d1b2a');
-      bgGrad.addColorStop(1, '#0a0a1a');
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+      // Background (cached — no per-frame gradient)
+      ctx.drawImage(sprites.bg, 0, 0);
 
       // Background stars
-      for (const s of bgStarsRef.current) {
+      ctx.fillStyle = '#ffffff';
+      for (let i = 0; i < bgStars.length; i++) {
+        const s = bgStars[i];
         ctx.globalAlpha = s.alpha;
-        ctx.fillStyle = '#ffffff';
         ctx.beginPath();
         ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.globalAlpha = 1;
 
-      // Stars
-      for (const s of starsRef.current) {
-        drawStar(ctx, s.x, s.y, s.rotation);
+      // Stars (pre-rendered sprite)
+      for (let i = 0; i < stars.length; i++) {
+        const s = stars[i];
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(s.rotation);
+        ctx.drawImage(sprites.star, -15, -15);
+        ctx.restore();
       }
 
-      // Asteroids
-      for (const a of asteroidsRef.current) {
-        drawAsteroid(ctx, a);
+      // Asteroids (still drawn procedurally — varied sizes)
+      for (let i = 0; i < asteroids.length; i++) {
+        drawAsteroid(ctx, asteroids[i]);
       }
 
-      // Player
+      // Player (pre-rendered sprite)
       if (state.playerFlashTime > 0) {
         ctx.globalAlpha = Math.sin(state.playerFlashTime * 25) > 0 ? 1 : 0.3;
       }
-      drawPlayer(ctx, state.playerX, state.playerY);
+      ctx.drawImage(sprites.player, state.playerX - 20, state.playerY - 20);
       ctx.globalAlpha = 1;
 
-      // Particles
-      for (const p of particlesRef.current) {
+      // Particles (batch by color to reduce state changes)
+      let lastColor = '';
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
         const alpha = p.life / p.maxLife;
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = p.color;
+        if (p.color !== lastColor) {
+          ctx.fillStyle = p.color;
+          lastColor = p.color;
+        }
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
         ctx.fill();
@@ -548,13 +575,14 @@ export default function GameCanvas({
       ctx.globalAlpha = 1;
 
       // Score popups
-      for (const p of popupsRef.current) {
+      ctx.textAlign = 'center';
+      for (let i = 0; i < popups.length; i++) {
+        const p = popups[i];
         const alpha = p.life / p.maxLife;
         const scale = 1 + (1 - alpha) * 0.5;
         ctx.globalAlpha = alpha;
         ctx.fillStyle = p.color;
         ctx.font = `bold ${18 * scale}px "Arial Black", Arial, sans-serif`;
-        ctx.textAlign = 'center';
         ctx.fillText(p.text, p.x, p.y);
       }
       ctx.globalAlpha = 1;

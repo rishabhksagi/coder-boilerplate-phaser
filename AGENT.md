@@ -3,6 +3,8 @@
 ## Stack
 - React 18 + TypeScript + Vite
 - HTML5 Canvas (`CanvasRenderingContext2D`) for game rendering
+- **Matter.js** — 2D rigid body physics (collisions, forces, constraints)
+- **Howler.js** — Audio playback (sprites, pooling, mobile support)
 - Tailwind CSS + shadcn/ui for menus, HUD, overlays
 - Lucide React for icons
 - No game engine — all rendering via Canvas API and `requestAnimationFrame`
@@ -38,16 +40,15 @@ export default function GameCanvas() {
 
   useEffect(() => {
     const canvas = canvasRef.current!;
-    const ctx = canvas.getContext('2d')!;
+    const ctx = canvas.getContext('2d', { alpha: false })!; // alpha:false = faster
+
     let lastTime = 0;
 
     function loop(timestamp: number) {
       const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
       lastTime = timestamp;
 
-      // Update game state
       update(dt);
-      // Render
       render(ctx);
 
       animRef.current = requestAnimationFrame(loop);
@@ -65,8 +66,208 @@ export default function GameCanvas() {
 - Use `useRef` for mutable game state (not `useState` — avoids re-renders)
 - Use `useState` only for React UI that needs to re-render (HUD scores, etc.)
 - Use `EventBus` to send game events to React (score changes, game over)
-- Use `requestAnimationFrame` for the game loop
 - Delta time (`dt`) for frame-rate-independent movement
+
+## Performance Best Practices
+
+### Pre-render sprites to offscreen canvases
+```ts
+// Create once at init, reuse every frame
+function createSprite(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  draw(c.getContext('2d')!);
+  return c;
+}
+
+const playerSprite = createSprite(40, 40, (ctx) => { /* draw player */ });
+
+// In render loop — drawImage is faster than redrawing paths
+ctx.drawImage(playerSprite, x - 20, y - 20);
+```
+
+### Cache static backgrounds
+```ts
+// Draw gradient/stars once to an offscreen canvas
+const bgCanvas = createSprite(800, 600, (ctx) => {
+  const grad = ctx.createLinearGradient(0, 0, 800, 600);
+  grad.addColorStop(0, '#0a0a1a');
+  grad.addColorStop(1, '#1a1a3e');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 800, 600);
+});
+// In loop: ctx.drawImage(bgCanvas, 0, 0);
+```
+
+### Use swap-remove for arrays (O(1) instead of O(n) splice)
+```ts
+function removeAt<T>(arr: T[], i: number) {
+  arr[i] = arr[arr.length - 1];
+  arr.pop();
+}
+```
+
+### Minimize state changes
+```ts
+// Batch draws by color — set fillStyle once, draw many
+ctx.fillStyle = '#ffd93d';
+for (const p of particles) { ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill(); }
+```
+
+### Use `{ alpha: false }` for opaque canvases
+```ts
+const ctx = canvas.getContext('2d', { alpha: false })!;
+```
+
+## Matter.js — Physics Engine
+
+Use Matter.js for games needing realistic physics (pool, pinball, angry birds, marble games).
+
+### Setup
+```ts
+import Matter from 'matter-js';
+
+const engine = Matter.Engine.create();
+const world = engine.world;
+
+// Create bodies
+const ball = Matter.Bodies.circle(400, 300, 15, {
+  restitution: 0.9,  // Bounciness
+  friction: 0.05,
+  density: 0.01,
+});
+const ground = Matter.Bodies.rectangle(400, 590, 800, 20, { isStatic: true });
+
+Matter.Composite.add(world, [ball, ground]);
+```
+
+### Update in game loop
+```ts
+function update(dt: number) {
+  Matter.Engine.update(engine, dt * 1000); // Matter uses ms
+}
+```
+
+### Render Matter bodies with Canvas
+```ts
+function render(ctx: CanvasRenderingContext2D) {
+  for (const body of Matter.Composite.allBodies(world)) {
+    ctx.beginPath();
+    const vertices = body.vertices;
+    ctx.moveTo(vertices[0].x, vertices[0].y);
+    for (let i = 1; i < vertices.length; i++) {
+      ctx.lineTo(vertices[i].x, vertices[i].y);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+```
+
+### Common patterns
+```ts
+// Apply force (e.g., cue stick hit)
+Matter.Body.applyForce(ball, ball.position, { x: 0.05, y: 0 });
+
+// Set velocity directly (e.g., jump)
+Matter.Body.setVelocity(player, { x: 0, y: -10 });
+
+// Collision events
+Matter.Events.on(engine, 'collisionStart', (event) => {
+  for (const pair of event.pairs) {
+    // pair.bodyA, pair.bodyB
+  }
+});
+
+// Constraints (e.g., rope, joint)
+const rope = Matter.Constraint.create({
+  bodyA: anchor, bodyB: ball,
+  length: 100, stiffness: 0.01,
+});
+
+// Walls
+const walls = [
+  Matter.Bodies.rectangle(400, 0, 800, 20, { isStatic: true }),   // top
+  Matter.Bodies.rectangle(400, 600, 800, 20, { isStatic: true }), // bottom
+  Matter.Bodies.rectangle(0, 300, 20, 600, { isStatic: true }),   // left
+  Matter.Bodies.rectangle(800, 300, 20, 600, { isStatic: true }), // right
+];
+```
+
+### When to use Matter.js vs simple math
+| Game type | Use |
+|-----------|-----|
+| Platformer, shooter, arcade | Simple math (velocity + gravity + AABB) |
+| Pool, billiards, marble | Matter.js (elastic collisions) |
+| Angry birds, destruction | Matter.js (rigid bodies, forces) |
+| Pinball | Matter.js (bouncing, flippers as constraints) |
+| Ragdoll, rope physics | Matter.js (constraints, composite bodies) |
+| Top-down RPG, puzzle | Simple math |
+
+## Howler.js — Audio
+
+### Setup
+```ts
+import { Howl } from 'howler';
+
+// Procedural sounds with sprite sheet
+const sfx = new Howl({
+  src: ['data:audio/wav;base64,...'], // or URL
+  sprite: {
+    collect: [0, 200],
+    hit: [300, 400],
+    jump: [800, 150],
+  },
+  volume: 0.5,
+});
+
+sfx.play('collect');
+```
+
+### Quick procedural sound (no audio files needed)
+```ts
+import { Howl } from 'howler';
+
+function createToneBuffer(freq: number, duration: number, type: OscillatorType = 'square'): string {
+  const ctx = new OfflineAudioContext(1, 44100 * duration, 44100);
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.3, 0);
+  gain.gain.exponentialRampToValueAtTime(0.001, duration);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start();
+  osc.stop(duration);
+  // Render and convert to data URL — use Howl for playback
+  return ''; // See Howler docs for buffer loading
+}
+
+// Simpler: use Web Audio API directly for procedural, Howler for file-based
+const audioCtx = new AudioContext();
+function playTone(freq: number, dur: number, type: OscillatorType = 'sine') {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + dur);
+}
+```
+
+### Background music
+```ts
+const bgm = new Howl({
+  src: ['/assets/music.mp3'],
+  loop: true,
+  volume: 0.3,
+});
+bgm.play();
+// bgm.pause(); bgm.stop();
+```
 
 ## Canvas 2D Rendering
 
@@ -95,27 +296,9 @@ ctx.roundRect(x, y, w, h, radius);
 ctx.fill();
 ```
 
-### Sprite-quality characters
-```ts
-function drawCharacter(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  ctx.save();
-  ctx.translate(x, y);
-  // Body with gradient
-  const bodyGrad = ctx.createLinearGradient(0, -10, 0, 10);
-  bodyGrad.addColorStop(0, '#4a90d9');
-  bodyGrad.addColorStop(1, '#2a5098');
-  ctx.fillStyle = bodyGrad;
-  ctx.beginPath();
-  ctx.roundRect(-12, -10, 24, 20, 4);
-  ctx.fill();
-  // Eyes, details, etc.
-  ctx.restore();
-}
-```
+## Collision Detection (Simple — when not using Matter.js)
 
-## Collision Detection
-
-### AABB (axis-aligned bounding box)
+### AABB
 ```ts
 function aabb(a: {x:number,y:number,w:number,h:number}, b: {x:number,y:number,w:number,h:number}) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -140,9 +323,6 @@ useEffect(() => {
   window.addEventListener('keyup', up);
   return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
 }, []);
-
-// In game loop:
-if (keys.current.has('arrowleft') || keys.current.has('a')) { /* move left */ }
 ```
 
 ## Game → React Communication (EventBus)
@@ -165,7 +345,8 @@ useEffect(() => {
 | In-game HUD (score, lives) | React (positioned above canvas) |
 | Pause menu, settings | React overlay |
 | Particles, effects | Canvas API |
-| Sound | Web Audio API |
+| Sound | Howler.js (files) or Web Audio API (procedural) |
+| Physics | Matter.js (complex) or simple math (basic) |
 
 ## Game Feel ("Juice")
 - **Screen shake**: Offset canvas translate by random px for N frames
@@ -175,45 +356,11 @@ useEffect(() => {
 - **Fade transitions**: Draw black rect with decreasing alpha
 - **Smooth movement**: Always multiply by `dt` (delta time)
 
-## Simple Physics
-```ts
-// Velocity + gravity
-entity.vy += gravity * dt;
-entity.y += entity.vy * dt;
+## Pre-installed Packages
+- react, react-dom, react-router-dom
+- matter-js (@types/matter-js)
+- howler (@types/howler)
+- tailwindcss, shadcn/ui components (55+)
+- lucide-react, recharts, zod, react-hook-form
 
-// Ground collision
-if (entity.y + entity.height > groundY) {
-  entity.y = groundY - entity.height;
-  entity.vy = 0;
-  entity.grounded = true;
-}
-
-// Jump
-if (keys.has('arrowup') && entity.grounded) {
-  entity.vy = -jumpForce;
-  entity.grounded = false;
-}
-```
-
-## Web Audio API (Sound)
-```ts
-const audioCtx = new AudioContext();
-function playSound(freq: number, duration: number, type: OscillatorType = 'sine') {
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-  osc.type = type;
-  osc.frequency.value = freq;
-  gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-  osc.connect(gain).connect(audioCtx.destination);
-  osc.start();
-  osc.stop(audioCtx.currentTime + duration);
-}
-// Collect sound: playSound(880, 0.1, 'square');
-// Hit sound: playSound(200, 0.2, 'sawtooth');
-```
-
-## Pre-installed shadcn/ui Components
-Accordion, Alert, AlertDialog, Avatar, Badge, Button, Calendar, Card, Carousel, Checkbox, Collapsible, Command, Dialog, DropdownMenu, Form, HoverCard, Input, Label, Menubar, NavigationMenu, Pagination, Popover, Progress, RadioGroup, Resizable, ScrollArea, Select, Separator, Sidebar, Skeleton, Slider, Sonner, Switch, Tabs, Textarea, Toast, Toggle, Tooltip, and more.
-
-Import from `@/components/ui/<component>`.
+Import shadcn components from `@/components/ui/<component>`.
