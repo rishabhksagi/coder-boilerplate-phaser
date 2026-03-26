@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import PhaserGame from '@/game/PhaserGame';
+import GameCanvas from '@/game/GameCanvas';
 import { Badge } from '@/components/ui/badge';
 import { Heart, Star, Layers } from 'lucide-react';
 
@@ -50,8 +50,8 @@ export default function Play() {
         </div>
       </div>
 
-      {/* Phaser Canvas */}
-      <PhaserGame
+      {/* Game Canvas */}
+      <GameCanvas
         onScoreChange={setScore}
         onLivesChange={setLives}
         onLevelChange={setLevel}

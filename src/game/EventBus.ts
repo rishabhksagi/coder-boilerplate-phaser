@@ -1,6 +1,6 @@
 /**
- * Lightweight event bus for Phaser ↔ React communication.
- * Phaser scenes emit events here; React components subscribe to them.
+ * Lightweight event bus for Game ↔ React communication.
+ * Game canvas emits events here; React components subscribe to them.
  */
 
 type Listener = (...args: any[]) => void;
